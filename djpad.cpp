@@ -271,50 +271,51 @@ MidiMetaEventType midi_meta_event_type(uint8_t c)
 	case 0x03: return MidiMetaEventType_name;
 	case 0x04: return MidiMetaEventType_instrument;
 	case 0x05: return MidiMetaEventType_lyric;
-	case 0x07: return MidiMetaEventType_marker;
-	case 0x08: return MidiMetaEventType_cue_point;
-	case 0x09: return MidiMetaEventType_program_name;
-	case 0x20: return MidiMetaEventType_device_name;
-	case 0x21: return MidiMetaEventType_midi_channel_prefix;
-	case 0x2f: return MidiMetaEventType_midi_port;
-	case 0x51: return MidiMetaEventType_end_of_track;
-	case 0x54: return MidiMetaEventType_tempo;
-	case 0x58: return MidiMetaEventType_smpte_offset;
-	case 0x59: return MidiMetaEventType_time_signature;
-	case 0x7f: return MidiMetaEventType_key_signature;
+	case 0x06: return MidiMetaEventType_marker;
+	case 0x07: return MidiMetaEventType_cue_point;
+	case 0x08: return MidiMetaEventType_program_name;
+	case 0x09: return MidiMetaEventType_device_name;
+	case 0x20: return MidiMetaEventType_midi_channel_prefix;
+	case 0x21: return MidiMetaEventType_midi_port;
+	case 0x2F: return MidiMetaEventType_end_of_track;
+	case 0x51: return MidiMetaEventType_tempo;
+	case 0x54: return MidiMetaEventType_smpte_offset;
+	case 0x58: return MidiMetaEventType_time_signature;
+	case 0x59: return MidiMetaEventType_key_signature;
+	case 0x7F: return MidiMetaEventType_sequencer_event;
 	default:   return MidiMetaEventType_unknown;
 	}
 }
 
-struct MidiMetaEvent {
-	MidiMetaEventType type;
-	union {
-		uint16_t sequence_number;
-		struct {
-			uint32_t length;
-			char     *str;
-		} text;
-		uint8_t channel_prefix;
-		uint8_t midi_port;
-		uint32_t tempo;
-		struct {
-			uint8_t hours;
-			uint8_t minutes;
-			uint8_t seconds;
-			uint8_t frames;
-			uint8_t fractional_frames;
-		} smpte_offset;
-		struct {
-			uint8_t numerator;
-			uint8_t denominator;
-			uint8_t num_clocks;
-			uint8_t num_32nd_notes;
-		} time_signature;
-		struct {
-			uint8_t flats_or_sharps;
-			uint8_t major_or_minor;
-		} key_signature;
-	};
+struct String {
+	uint32_t length;
+	const char *str;
+};
+
+struct MidiTrack {
+	uint16_t sequence_number;
+	uint8_t channel_prefix;
+	uint8_t midi_port;
+	uint32_t tempo;
+	String instrument;
+	String name;
+	struct {
+		uint8_t hours;
+		uint8_t minutes;
+		uint8_t seconds;
+		uint8_t frames;
+		uint8_t fractional_frames;
+	} smpte_offset;
+	struct {
+		uint8_t numerator;
+		uint8_t denominator;
+		uint8_t num_clocks;
+		uint8_t num_32nd_notes;
+	} time_signature;
+	struct {
+		uint8_t flats_or_sharps;
+		uint8_t major_or_minor;
+	} key_signature;
 };
 
 uint32_t read_variable_length(char **ptr)
@@ -355,7 +356,120 @@ MidiChunkType read_midi_chunk_type(char **ptr)
 	return MidiChunkType_unknown;
 }
 
+double midi_notes[] = {
+	16.35,
+	17.32,
+	18.35,
+	19.45,
+	20.60,
+	21.83,
+	23.12,
+	24.50,
+	25.96,
+	27.50,
+	29.14,
+	30.87,
+	32.70,
+	34.65,
+	36.71,
+	38.89,
+	41.20,
+	43.65,
+	46.25,
+	49.00,
+	51.91,
+	55.00,
+	58.27,
+	61.74,
+	65.41,
+	69.30,
+	73.42,
+	77.78,
+	82.41,
+	87.31,
+	92.50,
+	98.00,
+	103.83,
+	110.00,
+	116.54,
+	123.47,
+	130.81,
+	138.59,
+	146.83,
+	155.56,
+	164.81,
+	174.61,
+	185.00,
+	196.00,
+	207.65,
+	220.00,
+	233.08,
+	246.94,
+	261.63,
+	277.18,
+	293.66,
+	311.13,
+	329.63,
+	349.23,
+	369.99,
+	392.00,
+	415.30,
+	440.00,
+	466.16,
+	493.88,
+	523.25,
+	554.37,
+	587.33,
+	622.25,
+	659.25,
+	698.46,
+	739.99,
+	783.99,
+	830.61,
+	880.00,
+	932.33,
+	987.77,
+	1046.50,
+	1108.73,
+	1174.66,
+	1244.51,
+	1318.51,
+	1396.91,
+	1479.98,
+	1567.98,
+	1661.22,
+	1760.00,
+	1864.66,
+	1975.53,
+	2093.00,
+	2217.46,
+	2349.32,
+	2489.02,
+	2637.02,
+	2793.83,
+	2959.96,
+	3135.96,
+	3322.44,
+	3520.00,
+	3729.31,
+	3951.07,
+	4186.01,
+	4434.92,
+	4698.63,
+	4978.03,
+	5274.04,
+	5587.65,
+	5919.91,
+	6271.93,
+	6644.88,
+	7040.00,
+	7458.62,
+	7902.13
+};
+
 void parse_midi_track_chunk(MidiHeader &header,
+                            MidiTrack &track,
+                            ControllerHandle_t controller,
                             char *ptr,
                             char *end)
 {
@@ -383,10 +497,33 @@ void parse_midi_track_chunk(MidiHeader &header,
 				case MidiEventType_note_off: {
 					event.note.note     = *ptr++;
 					event.note.velocity = *ptr++;
+
+					DEBUG_LOGF("channel: %d", event.channel);
+
+					play_frequency_sync(controller,
+					                    midi_notes[event.note.note - 12],
+					                    track.tempo / track.time_signature.denominator);
+
+#if 0
+					DEBUG_LOGF("note OFF: %d, velocity: %d",
+					           event.note.note,
+					           event.note.velocity);
+#endif
 				} break;
 				case MidiEventType_note_on: {
 					event.note.note     = *ptr++;
 					event.note.velocity = *ptr++;
+					DEBUG_LOGF("channel: %d", event.channel);
+
+					DEBUG_LOGF("note ON: %d, velocity: %d",
+					           event.note.note,
+					           event.note.velocity);
+					DEBUG_LOGF("play note for: %f ms", track.tempo / 1000.0f);
+					DEBUG_LOGF("frequency: %f", midi_notes[event.note.note - 12]);
+
+					play_frequency_sync(controller,
+					                    midi_notes[event.note.note - 12],
+					                    track.tempo / track.time_signature.denominator);
 				} break;
 				case MidiEventType_polyphonic_pressure: {
 					event.polyphonic_pressure.note     = *ptr++;
@@ -426,75 +563,100 @@ void parse_midi_track_chunk(MidiHeader &header,
 			DEBUG_LOGF("unimplemented");
 			DEBUG_BREAK();
 		} else if (status == 0xFF) { // meta events
-			MidiMetaEvent event = {};
-			event.type = midi_meta_event_type(*ptr++);
-
+			MidiMetaEventType type = midi_meta_event_type(*ptr++);
 			uint32_t event_length = read_variable_length(&ptr);
 
-			switch (event.type) {
+			switch (type) {
 			case MidiMetaEventType_sequence_number: {
-				event.sequence_number = *(uint16*)ptr;
+				track.sequence_number = *(uint16*)ptr;
+			} break;
+			case MidiMetaEventType_instrument: {
+				track.instrument.length = event_length;
+				track.instrument.str    = ptr;
+				DEBUG_LOGF("instrument: %.*s", event_length, ptr);
 			} break;
 			case MidiMetaEventType_text:
 			case MidiMetaEventType_copyright:
-			case MidiMetaEventType_name:
-			case MidiMetaEventType_instrument:
+				DEBUG_LOGF("%.*s", event_length, ptr);
+				break;
+			case MidiMetaEventType_name: {
+				track.name.length = event_length;
+				track.name.str = ptr;
+				DEBUG_LOGF("track name: %.*s", event_length, ptr);
+			} break;
 			case MidiMetaEventType_lyric:
 			case MidiMetaEventType_marker:
 			case MidiMetaEventType_cue_point:
 			case MidiMetaEventType_program_name:
 			case MidiMetaEventType_device_name: {
-				event.text.length = event_length;
-				event.text.str    = ptr;
+				DEBUG_LOGF("text: %.*s", event_length, ptr);
 			} break;
 			case MidiMetaEventType_midi_channel_prefix: {
-				event.channel_prefix = ptr[0];
+				track.channel_prefix = ptr[0];
+				DEBUG_LOGF("midi channel prefix: %d", track.channel_prefix);
 			} break;
 			case MidiMetaEventType_midi_port: {
-				event.midi_port = ptr[0];
+				track.midi_port = ptr[0];
+				DEBUG_LOGF("midi port: %d", track.midi_port);
 			} break;
 			case MidiMetaEventType_end_of_track: {
 				end_of_track = true;
+				DEBUG_LOGF("end of track");
 			} break;
 			case MidiMetaEventType_tempo: {
 				uint8_t b0 = ptr[0];
 				uint8_t b1 = ptr[1];
 				uint8_t b2 = ptr[2];
 
-				event.tempo = (b0 << 16) |
+				track.tempo = (b0 << 16) |
 				              ((b1 << 8) & 0x00ff) |
 				              (b2 & 0x0000ff);
+				DEBUG_LOGF("tempo change: %d", track.tempo);
 			} break;
 			case MidiMetaEventType_smpte_offset: {
-				event.smpte_offset.hours             = ptr[0];
-				event.smpte_offset.minutes           = ptr[1];
-				event.smpte_offset.seconds           = ptr[2];
-				event.smpte_offset.frames            = ptr[3];
-				event.smpte_offset.fractional_frames = ptr[4];
+				track.smpte_offset.hours             = ptr[0];
+				track.smpte_offset.minutes           = ptr[1];
+				track.smpte_offset.seconds           = ptr[2];
+				track.smpte_offset.frames            = ptr[3];
+				track.smpte_offset.fractional_frames = ptr[4];
+				DEBUG_LOGF("smpte offset: %d:%d:%d - "
+				           "frames: %d, fractional frames: %d",
+				           track.smpte_offset.hours,
+				           track.smpte_offset.minutes,
+				           track.smpte_offset.seconds,
+				           track.smpte_offset.frames,
+				           track.smpte_offset.fractional_frames);
 			} break;
 			case MidiMetaEventType_time_signature: {
-				event.time_signature.numerator      = ptr[0];
-				event.time_signature.denominator    = ptr[1];
-				event.time_signature.num_clocks     = ptr[2];
-				event.time_signature.num_32nd_notes = ptr[3];
+				track.time_signature.numerator      = ptr[0];
+				track.time_signature.denominator    = ptr[1];
+				track.time_signature.num_clocks     = ptr[2];
+				track.time_signature.num_32nd_notes = ptr[3];
+				DEBUG_LOGF("time signature { numerator: %d, denominator: %d, "
+				           "num_clocks: %d, num_32nd_notes: %d }",
+				           track.time_signature.numerator,
+				           track.time_signature.denominator,
+				           track.time_signature.num_clocks,
+				           track.time_signature.num_32nd_notes);
 			} break;
 			case MidiMetaEventType_key_signature: {
-				event.key_signature.flats_or_sharps = ptr[0];
-				event.key_signature.major_or_minor  = ptr[1];
+				track.key_signature.flats_or_sharps = ptr[0];
+				track.key_signature.major_or_minor  = ptr[1];
+				DEBUG_LOGF("key signature { flats/sharps: %d, major/minor: %d",
+				           track.key_signature.flats_or_sharps,
+				           track.key_signature.major_or_minor);
 			} break;
 			case MidiMetaEventType_sequencer_event: {
 				DEBUG_LOGF("\tSequencer specific event ??");
 			} break;
 			default:
-				DEBUG_LOGF("skipping over unknown meta event: 0x%02x",
-				           event.type);
+				DEBUG_LOGF("skipping over unknown meta event: 0x%02x", type);
 				continue;
 			}
 
 			ptr += event_length;
 		} else {
-			DEBUG_LOGF("skipping over unknown byte in track: 0x%02x",
-			           ptr[0] & 0xFF);
+			DEBUG_LOGF("skipping over unknown status in track: 0x%02x", status);
 		}
 	} while(!end_of_track && ptr < end);
 }
@@ -535,30 +697,21 @@ MidiHeader parse_midi_header(char *ptr, char *end)
 	if (header.division & 0x8000) {
 		header.track_mode = DeltaMode_timecode;
 	} else {
-		header.division = header.division >> 1;
 		header.track_mode = DeltaMode_metrical;
 	}
 
 	return header;
 }
 
-int APIENTRY WinMain(HINSTANCE hInstance,
-                     HINSTANCE hPrevInstance,
-                     LPSTR     lpCmdLine,
-                     int       nCmdShow)
+void play_midi_file(const char *file, ControllerHandle_t controller)
 {
-	VAR_UNUSED(hInstance);
-	VAR_UNUSED(hPrevInstance);
-	VAR_UNUSED(lpCmdLine);
-	VAR_UNUSED(nCmdShow);
-
-#if 1
 	size_t size;
-	char *midi = read_entire_file("../opening.mid", &size);
+	char *midi = read_entire_file(file, &size);
 	if (midi == nullptr) {
-		return -1;
+		return;
 	}
 
+	MidiTrack track = {};
 	MidiHeader header = {};
 
 	char *end = midi + size;
@@ -574,7 +727,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 			header = parse_midi_header(ptr, end);
 		} break;
 		case MidiChunkType_track: {
-			parse_midi_track_chunk(header, ptr, end);
+			parse_midi_track_chunk(header, track, controller, ptr, ptr + chunk_length);
 		} break;
 		default: {
 			DEBUG_LOGF("unknown midi chunk type: %.*s", 4, chunk_type);
@@ -583,7 +736,18 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 
 		ptr += chunk_length;
 	} while (ptr < end);
-#endif
+}
+
+
+int APIENTRY WinMain(HINSTANCE hInstance,
+                     HINSTANCE hPrevInstance,
+                     LPSTR     lpCmdLine,
+                     int       nCmdShow)
+{
+	VAR_UNUSED(hInstance);
+	VAR_UNUSED(hPrevInstance);
+	VAR_UNUSED(lpCmdLine);
+	VAR_UNUSED(nCmdShow);
 
 
 	QueryPerformanceFrequency(&clock_frequency);
@@ -604,26 +768,6 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 	                         nullptr,
 	                         hInstance,
 	                         nullptr);
-
-	enum Notes {
-		Note_A,
-		Note_B,
-		Note_C,
-		Note_D,
-		Note_E,
-		Note_F,
-		Note_G
-	};
-
-	double frequencies[] = {
-		1760.00, // A
-		1975.53, // B
-		2093.00, // C
-		2349.32, // D
-		2637.02, // E
-		2793.83, // F
-		3135.96, // G
-	};
 
 	if (hwnd == nullptr) {
 		quit();
@@ -648,7 +792,6 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 	int num_controllers = 0;
 	ControllerHandle_t controller_handles[STEAM_CONTROLLER_MAX_COUNT];
 
-
 	MSG msg;
 	while(true) {
 		while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -665,53 +808,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 		}
 
 		if (num_controllers != 0) {
-			sleep_for(2000000);
-
-			play_frequency_sync(controller_handles[0], frequencies[Note_F], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_A], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_B], 125000);
-			sleep_for(125000);
-
-			play_frequency_sync(controller_handles[0], frequencies[Note_F], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_A], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_B], 125000);
-			sleep_for(125000);
-
-			play_frequency_sync(controller_handles[0], frequencies[Note_F], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_A], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_B], 125000);
-			sleep_for(125000);
-
-			play_frequency_sync(controller_handles[0], frequencies[Note_E], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_D], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_B], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_C], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_B], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_G], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_E], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_D], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_E], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_G], 125000);
-			sleep_for(125000);
-			play_frequency_sync(controller_handles[0], frequencies[Note_E], 125000);
-			sleep_for(125000);
-
-			sleep_for(2000000);
+			play_midi_file("../opening.mid", controller_handles[0]);
 			return 0;
 		}
 		SteamAPI_RunCallbacks();
