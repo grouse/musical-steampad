@@ -475,12 +475,13 @@ void parse_midi_track_chunk(MidiHeader &header,
 {
 	VAR_UNUSED(header);
 
-	uint32_t delta_time = read_variable_length(&ptr);
-	DEBUG_LOGF("delta time: %d", delta_time);
 
 	bool end_of_track = false;
 
 	do {
+		uint32_t delta_time = read_variable_length(&ptr);
+		DEBUG_LOGF("delta time: %d", delta_time);
+
 		uint8_t status = *ptr++;
 
 		if (status >= 0x80 && status <= 0xEF) { // midi events
