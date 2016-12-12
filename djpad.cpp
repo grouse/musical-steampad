@@ -499,32 +499,21 @@ void parse_midi_track_chunk(MidiHeader &header,
 					event.note.note     = *ptr++;
 					event.note.velocity = *ptr++;
 
-					DEBUG_LOGF("channel: %d", event.channel);
-
-					play_frequency_sync(controller,
-					                    midi_notes[event.note.note - 12],
-					                    track.tempo / track.time_signature.denominator);
-
-#if 0
-					DEBUG_LOGF("note OFF: %d, velocity: %d",
-					           event.note.note,
-					           event.note.velocity);
-#endif
+					DEBUG_LOGF("channel: %d, note OFF: %d"
+					           event.channel, event.note.note);
+					play_frequency_sync(controller, 0.0f, 0);
 				} break;
 				case MidiEventType_note_on: {
 					event.note.note     = *ptr++;
 					event.note.velocity = *ptr++;
-					DEBUG_LOGF("channel: %d", event.channel);
 
-					DEBUG_LOGF("note ON: %d, velocity: %d",
+					DEBUG_LOGF("channel: %d, note ON: %d, duration: %f ms",
+					           event.channel,
 					           event.note.note,
-					           event.note.velocity);
-					DEBUG_LOGF("play note for: %f ms", track.tempo / 1000.0f);
-					DEBUG_LOGF("frequency: %f", midi_notes[event.note.note - 12]);
-
+					           track.tempo / 1000.0f);
 					play_frequency_sync(controller,
 					                    midi_notes[event.note.note - 12],
-					                    track.tempo / track.time_signature.denominator);
+					                    track.tempo / 2);
 				} break;
 				case MidiEventType_polyphonic_pressure: {
 					event.polyphonic_pressure.note     = *ptr++;
