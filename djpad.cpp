@@ -122,20 +122,20 @@ int64_t get_time_microseconds()
 	return (int64_t)time.QuadPart;
 }
 
-void play_frequency(ControllerHandle_t handle, double frequency, int64_t microseconds)
+void play_frequency(ControllerHandle_t handle,
+                    int32_t pad,
+                    double frequency,
+                    double duration)
 {
 	double period = 1.0f / frequency;
 	uint16_t pulse = (uint16_t)(period * 1000000);
 
-	uint16_t repeat = (uint16_t)(microseconds / period);
+	uint16_t repeat = (duration >= 0.0) ? (duration / period) : 0x7FFF;
 
-	SteamController()->TriggerRepeatedHapticPulse(handle, k_ESteamControllerPad_Left, pulse, pulse, repeat, 0);
-}
-
-void play_frequency_sync(ControllerHandle_t handle, double frequency, int64_t microseconds)
-{
-	play_frequency(handle, frequency, microseconds);
-	sleep_for(microseconds);
+	SteamController()->TriggerRepeatedHapticPulse(handle,
+	                                              (ESteamControllerPad)pad,
+	                                              pulse, pulse,
+	                                              repeat, 0);
 }
 
 char *read_entire_file(const char *path, size_t *out_size)
@@ -160,162 +160,64 @@ char *read_entire_file(const char *path, size_t *out_size)
 	return nullptr;
 }
 
+enum MidiFileEventType {
+	MidiFileEventType_note_on,
+	MidiFileEventType_note_off,
+	MidiFileEventType_tempo
+};
+
+enum MidiDivisorType {
+	MidiDivisorType_ppq,
+	MidiDivisorType_smpte24,
+	MidiDivisorType_smpte25,
+	MidiDivisorType_smpte30_drop,
+	MidiDivisorType_smpte30
+};
+
 enum MidiChunkType {
 	MidiChunkType_unknown,
 	MidiChunkType_header,
 	MidiChunkType_track
 };
 
-enum DeltaMode {
-	DeltaMode_metrical,
-	DeltaMode_timecode
-};
+struct MidiFileEvent {
+	MidiFileEvent *next = nullptr;
 
-struct MidiHeader {
-	uint16_t format;
-	uint16_t ntracks;
-	uint16_t division;
-	DeltaMode track_mode;
-};
-
-enum MidiEventType {
-	MidiEventType_note_off,
-	MidiEventType_note_on,
-	MidiEventType_polyphonic_pressure,
-	MidiEventType_controller,
-	MidiEventType_program_change,
-	MidiEventType_channel_pressure,
-	MidiEventType_pitch_bend,
-
-	MidiEventType_unknown
-};
-
-MidiEventType midi_event_type(uint8_t c)
-{
-	switch (c) {
-	case 0x80: return MidiEventType_note_off;
-	case 0x90: return MidiEventType_note_on;
-	case 0xA0: return MidiEventType_polyphonic_pressure;
-	case 0xB0: return MidiEventType_controller;
-	case 0xC0: return MidiEventType_program_change;
-	case 0xD0: return MidiEventType_channel_pressure;
-	case 0xE0: return MidiEventType_pitch_bend;
-	default:   return MidiEventType_unknown;
-	}
-}
-
-struct MidiEvent {
-	uint8_t       channel;
-	MidiEventType type;
-
+	int64_t ticks;
+	MidiFileEventType type;
 	union {
 		struct {
 			uint8_t note;
 			uint8_t velocity;
+			uint8_t channel;
 		} note;
-
-		struct {
-			uint8_t note;
-			uint8_t pressure;
-		} polyphonic_pressure;
-
-		struct {
-			uint8_t controller;
-			uint8_t value;
-		} controller;
-
-		uint8_t program_change;
-		uint8_t channel_pressure;
-
-		struct {
-			union {
-				struct {
-					uint8_t lsb;
-					uint8_t msb;
-				} bytes;
-				uint16_t value;
-			};
-		} pitch_bend;
+		uint32_t tempo;
 	};
 };
 
-enum MidiMetaEventType {
-	MidiMetaEventType_sequence_number,
-	MidiMetaEventType_text,
-	MidiMetaEventType_copyright,
-	MidiMetaEventType_name,
-	MidiMetaEventType_instrument,
-	MidiMetaEventType_lyric,
-	MidiMetaEventType_marker,
-	MidiMetaEventType_cue_point,
-	MidiMetaEventType_program_name,
-	MidiMetaEventType_device_name,
-	MidiMetaEventType_midi_channel_prefix,
-	MidiMetaEventType_midi_port,
-	MidiMetaEventType_end_of_track,
-	MidiMetaEventType_tempo,
-	MidiMetaEventType_smpte_offset,
-	MidiMetaEventType_time_signature,
-	MidiMetaEventType_key_signature,
-	MidiMetaEventType_sequencer_event,
+struct MidiFile {
+	uint16_t format;
+	uint16_t ntracks;
 
-	MidiMetaEventType_unknown
+	uint16_t divisor;
+	MidiDivisorType divisor_type;
+
+	MidiFileEvent *first_event;
+	MidiFileEvent *last_evnt;
 };
 
-MidiMetaEventType midi_meta_event_type(uint8_t c)
-{
-	switch (c) {
-	case 0x00: return MidiMetaEventType_sequence_number;
-	case 0x01: return MidiMetaEventType_text;
-	case 0x02: return MidiMetaEventType_copyright;
-	case 0x03: return MidiMetaEventType_name;
-	case 0x04: return MidiMetaEventType_instrument;
-	case 0x05: return MidiMetaEventType_lyric;
-	case 0x06: return MidiMetaEventType_marker;
-	case 0x07: return MidiMetaEventType_cue_point;
-	case 0x08: return MidiMetaEventType_program_name;
-	case 0x09: return MidiMetaEventType_device_name;
-	case 0x20: return MidiMetaEventType_midi_channel_prefix;
-	case 0x21: return MidiMetaEventType_midi_port;
-	case 0x2F: return MidiMetaEventType_end_of_track;
-	case 0x51: return MidiMetaEventType_tempo;
-	case 0x54: return MidiMetaEventType_smpte_offset;
-	case 0x58: return MidiMetaEventType_time_signature;
-	case 0x59: return MidiMetaEventType_key_signature;
-	case 0x7F: return MidiMetaEventType_sequencer_event;
-	default:   return MidiMetaEventType_unknown;
-	}
-}
-
-struct String {
-	uint32_t length;
-	const char *str;
-};
-
-struct MidiTrack {
-	uint16_t sequence_number;
-	uint8_t channel_prefix;
-	uint8_t midi_port;
-	uint32_t tempo;
-	String instrument;
-	String name;
-	struct {
-		uint8_t hours;
-		uint8_t minutes;
-		uint8_t seconds;
-		uint8_t frames;
-		uint8_t fractional_frames;
-	} smpte_offset;
-	struct {
-		uint8_t numerator;
-		uint8_t denominator;
-		uint8_t num_clocks;
-		uint8_t num_32nd_notes;
-	} time_signature;
-	struct {
-		uint8_t flats_or_sharps;
-		uint8_t major_or_minor;
-	} key_signature;
+double midi_notes[128] = {
+	8.1758,  8.66196, 9.17702, 9.72272, 10.3009, 10.9134, 11.5623, 12.2499, 12.9783, 13.75, 14.5676, 15.4339,
+	16.3516, 17.3239, 18.354,  19.4454, 20.6017, 21.8268, 23.1247, 24.4997, 25.9565, 27.5,  29.1352, 30.8677,
+	32.7032, 34.6478, 36.7081, 38.8909, 41.2034, 43.6535, 46.2493, 48.9994, 51.9131, 55,    58.2705, 61.7354,
+	65.4064, 69.2957, 73.4162, 77.7817, 82.4069, 87.3071, 92.4986, 97.9989, 103.826, 110,   116.541, 123.471,
+	130.813, 138.591, 146.832, 155.563, 164.814, 174.614, 184.997, 195.998, 207.652, 220,   233.082, 246.942,
+	261.626, 277.183, 293.665, 311.127, 329.628, 349.228, 369.994, 391.995, 415.305, 440,   466.164, 493.883,
+	523.251, 554.365, 587.33,  622.254, 659.255, 698.456, 739.989, 783.991, 830.609, 880,   932.328, 987.767,
+	1046.5,  1108.73, 1174.66, 1244.51, 1318.51, 1396.91, 1479.98, 1567.98, 1661.22, 1760,  1864.66, 1975.53,
+	2093,    2217.46, 2349.32, 2489.02, 2637.02, 2793.83, 2959.96, 3135.96, 3322.44, 3520,  3729.31, 3951.07,
+	4186.01, 4434.92, 4698.64, 4978.03, 5274.04, 5587.65, 5919.91, 6271.93, 6644.88, 7040,  7458.62, 7902.13,
+	8372.02, 8869.84, 9397.27, 9956.06, 10548.1, 11175.3, 11839.8, 12543.9
 };
 
 uint32_t read_variable_length(char **ptr)
@@ -356,202 +258,6 @@ MidiChunkType read_midi_chunk_type(char **ptr)
 	return MidiChunkType_unknown;
 }
 
-double midi_notes[] = {
-	16.35,   17.32,   18.35,   19.45,   20.60,   21.83,   23.12,   24.50,   25.96,   27.50,   29.14,   30.87,
-	32.70,   34.65,   36.71,   38.89,   41.20,   43.65,   46.25,   49.00,   51.91,   55.00,   58.27,   61.74,
-	65.41,   69.30,   73.42,   77.78,   82.41,   87.31,   92.50,   98.00,   103.83,  110.00,  116.54,  123.47,
-	130.81,  138.59,  146.83,  155.56,  164.81,  174.61,  185.00,  196.00,  207.65,  220.00,  233.08,  246.94,
-	261.63,  277.18,  293.66,  311.13,  329.63,  349.23,  369.99,  392.00,  415.30,  440.00,  466.16,  493.88,
-	523.25,  554.37,  587.33,  622.25,  659.25,  698.46,  739.99,  783.99,  830.61,  880.00,  932.33,  987.77,
-	1046.50, 1108.73, 1174.66, 1244.51, 1318.51, 1396.91, 1479.98, 1567.98, 1661.22, 1760.00, 1864.66, 1975.53,
-	2093.00, 2217.46, 2349.32, 2489.02, 2637.02, 2793.83, 2959.96, 3135.96, 3322.44, 3520.00, 3729.31, 3951.07,
-	4186.01, 4434.92, 4698.63, 4978.03, 5274.04, 5587.65, 5919.91, 6271.93, 6644.88, 7040.00, 7458.62, 7902.13
-};
-
-void parse_midi_track_chunk(MidiHeader &header,
-                            MidiTrack &track,
-                            ControllerHandle_t controller,
-                            char *ptr,
-                            char *end)
-{
-	VAR_UNUSED(header);
-
-
-	bool end_of_track = false;
-
-	do {
-		uint32_t delta_time = read_variable_length(&ptr);
-		DEBUG_LOGF("delta time: %d", delta_time);
-
-		uint8_t status = *ptr++;
-
-		if (status >= 0x80 && status <= 0xEF) { // midi events
-			uint8_t midi_status = status & 0xF0;
-			uint8_t channel     = status & 0x0F;
-			uint8_t running     = 1;
-
-			while (running) {
-				MidiEvent event = {};
-				event.channel = channel;
-				event.type    = midi_event_type(midi_status);
-
-				switch (event.type) {
-				case MidiEventType_note_off: {
-					event.note.note     = *ptr++;
-					event.note.velocity = *ptr++;
-
-					DEBUG_LOGF("channel: %d, note OFF: %d"
-					           event.channel, event.note.note);
-					play_frequency_sync(controller, 0.0f, 0);
-				} break;
-				case MidiEventType_note_on: {
-					event.note.note     = *ptr++;
-					event.note.velocity = *ptr++;
-
-					DEBUG_LOGF("channel: %d, note ON: %d, duration: %f ms",
-					           event.channel,
-					           event.note.note,
-					           track.tempo / 1000.0f);
-					play_frequency_sync(controller,
-					                    midi_notes[event.note.note - 12],
-					                    track.tempo / 2);
-				} break;
-				case MidiEventType_polyphonic_pressure: {
-					event.polyphonic_pressure.note     = *ptr++;
-					event.polyphonic_pressure.pressure = *ptr++;
-				} break;
-				case MidiEventType_controller: {
-					event.controller.controller = *ptr++;
-					event.controller.value      = *ptr++;
-				} break;
-				case MidiEventType_program_change: {
-					event.program_change = *ptr++;
-				} break;
-				case MidiEventType_channel_pressure: {
-					event.channel_pressure = *ptr++;
-				} break;
-				case MidiEventType_pitch_bend: {
-					event.pitch_bend.bytes.lsb = *ptr++;
-					event.pitch_bend.bytes.msb = *ptr++;
-				} break;
-				default:
-					DEBUG_BREAK();
-					break;
-				}
-
-				if ((ptr[0] & 0x80) != 0) {
-					running = 0;
-				}
-			}
-		} else if (status == 0xF0) { // sysex events
-			uint32_t length = read_variable_length(&ptr);
-
-			ptr += length + 1; // read past the ending F7 byte
-			//DEBUG_ASSERT(ptr[-1] == 0xF7);
-
-			DEBUG_LOGF("unimplemented");
-		} else if (status == 0xF7) { // escape sequences
-			DEBUG_LOGF("unimplemented");
-			DEBUG_BREAK();
-		} else if (status == 0xFF) { // meta events
-			MidiMetaEventType type = midi_meta_event_type(*ptr++);
-			uint32_t event_length = read_variable_length(&ptr);
-
-			switch (type) {
-			case MidiMetaEventType_sequence_number: {
-				track.sequence_number = *(uint16*)ptr;
-			} break;
-			case MidiMetaEventType_instrument: {
-				track.instrument.length = event_length;
-				track.instrument.str    = ptr;
-				DEBUG_LOGF("instrument: %.*s", event_length, ptr);
-			} break;
-			case MidiMetaEventType_text:
-			case MidiMetaEventType_copyright:
-				DEBUG_LOGF("%.*s", event_length, ptr);
-				break;
-			case MidiMetaEventType_name: {
-				track.name.length = event_length;
-				track.name.str = ptr;
-				DEBUG_LOGF("track name: %.*s", event_length, ptr);
-			} break;
-			case MidiMetaEventType_lyric:
-			case MidiMetaEventType_marker:
-			case MidiMetaEventType_cue_point:
-			case MidiMetaEventType_program_name:
-			case MidiMetaEventType_device_name: {
-				DEBUG_LOGF("text: %.*s", event_length, ptr);
-			} break;
-			case MidiMetaEventType_midi_channel_prefix: {
-				track.channel_prefix = ptr[0];
-				DEBUG_LOGF("midi channel prefix: %d", track.channel_prefix);
-			} break;
-			case MidiMetaEventType_midi_port: {
-				track.midi_port = ptr[0];
-				DEBUG_LOGF("midi port: %d", track.midi_port);
-			} break;
-			case MidiMetaEventType_end_of_track: {
-				end_of_track = true;
-				DEBUG_LOGF("end of track");
-			} break;
-			case MidiMetaEventType_tempo: {
-				uint8_t b0 = ptr[0];
-				uint8_t b1 = ptr[1];
-				uint8_t b2 = ptr[2];
-
-				track.tempo = (b0 << 16) |
-				              ((b1 << 8) & 0x00ff) |
-				              (b2 & 0x0000ff);
-				DEBUG_LOGF("tempo change: %d", track.tempo);
-			} break;
-			case MidiMetaEventType_smpte_offset: {
-				track.smpte_offset.hours             = ptr[0];
-				track.smpte_offset.minutes           = ptr[1];
-				track.smpte_offset.seconds           = ptr[2];
-				track.smpte_offset.frames            = ptr[3];
-				track.smpte_offset.fractional_frames = ptr[4];
-				DEBUG_LOGF("smpte offset: %d:%d:%d - "
-				           "frames: %d, fractional frames: %d",
-				           track.smpte_offset.hours,
-				           track.smpte_offset.minutes,
-				           track.smpte_offset.seconds,
-				           track.smpte_offset.frames,
-				           track.smpte_offset.fractional_frames);
-			} break;
-			case MidiMetaEventType_time_signature: {
-				track.time_signature.numerator      = ptr[0];
-				track.time_signature.denominator    = ptr[1];
-				track.time_signature.num_clocks     = ptr[2];
-				track.time_signature.num_32nd_notes = ptr[3];
-				DEBUG_LOGF("time signature { numerator: %d, denominator: %d, "
-				           "num_clocks: %d, num_32nd_notes: %d }",
-				           track.time_signature.numerator,
-				           track.time_signature.denominator,
-				           track.time_signature.num_clocks,
-				           track.time_signature.num_32nd_notes);
-			} break;
-			case MidiMetaEventType_key_signature: {
-				track.key_signature.flats_or_sharps = ptr[0];
-				track.key_signature.major_or_minor  = ptr[1];
-				DEBUG_LOGF("key signature { flats/sharps: %d, major/minor: %d",
-				           track.key_signature.flats_or_sharps,
-				           track.key_signature.major_or_minor);
-			} break;
-			case MidiMetaEventType_sequencer_event: {
-				DEBUG_LOGF("\tSequencer specific event ??");
-			} break;
-			default:
-				DEBUG_LOGF("skipping over unknown meta event: 0x%02x", type);
-				continue;
-			}
-
-			ptr += event_length;
-		} else {
-			DEBUG_LOGF("skipping over unknown status in track: 0x%02x", status);
-		}
-	} while(!end_of_track && ptr < end);
-}
-
 uint16_t read_16bit(char **ptr)
 {
 	uint8_t b0 = *(*ptr)++;
@@ -559,6 +265,18 @@ uint16_t read_16bit(char **ptr)
 
 	uint16_t value = ((b0 << 8) | (b1 & 0x00FF));
 	return value;
+}
+
+uint16_t read_16bit(char *ptr)
+{
+	return ((ptr[0] << 8) | (ptr[1] & 0x00FF));
+}
+
+uint32_t read_24bit(char *ptr)
+{
+	return ((ptr[0] << 16)) |
+	       ((ptr[1] << 8) & 0x00FF) |
+	       ((ptr[2])      & 0x0000FF);
 }
 
 uint32_t read_32bit(char **ptr)
@@ -575,60 +293,264 @@ uint32_t read_32bit(char **ptr)
 	return value;
 }
 
-MidiHeader parse_midi_header(char *ptr, char *end)
+uint32_t read_32bit(char *ptr)
 {
-	VAR_UNUSED(end);
-
-	MidiHeader header = {};
-
-	header.format   = read_16bit(&ptr);
-	header.ntracks  = read_16bit(&ptr);
-	header.division = read_16bit(&ptr);
-
-	if (header.division & 0x8000) {
-		header.track_mode = DeltaMode_timecode;
-	} else {
-		header.track_mode = DeltaMode_metrical;
-	}
-
-	return header;
+	return ((ptr[0] << 24)) |
+	       ((ptr[1 ]<< 16) & 0x00FF) |
+	       ((ptr[2] << 8)  & 0x0000FF) |
+	       ((ptr[3])       & 0x000000FF);
 }
 
-void play_midi_file(const char *file, ControllerHandle_t controller)
+void insert_midi_event(MidiFile *midi, MidiFileEvent *event)
 {
-	size_t size;
-	char *midi = read_entire_file(file, &size);
-	if (midi == nullptr) {
-		return;
+	if (midi->first_event == nullptr) {
+		midi->first_event = event;
+	} else {
+		MidiFileEvent *it = midi->first_event;
+		do {
+			if (it->next == nullptr) {
+				it->next = event;
+				break;
+			} else if (it->next->ticks > event->ticks) {
+				event->next = it->next;
+				it->next = event;
+				break;
+			}
+
+			it = it->next;
+		} while (it);
 	}
+}
 
-	MidiTrack track = {};
-	MidiHeader header = {};
+int64_t
+parse_midi_track(MidiFile *midi, int64_t torigin, char *ptr, char *end)
+{
+	int64_t ticks = torigin;
+	uint8_t status, running_status = 0;
+	bool end_of_track = false;
 
-	char *end = midi + size;
-	char *ptr = midi;
-	do {
-		MidiChunkType chunk_type = read_midi_chunk_type(&ptr);
-		DEBUG_ASSERT(chunk_type != MidiChunkType_unknown);
+	while (ptr < end && !end_of_track) {
+		uint32_t delta_ticks = read_variable_length(&ptr);
+		ticks += delta_ticks;
 
-		uint32_t chunk_length = read_32bit(&ptr);
-
-		switch (chunk_type) {
-		case MidiChunkType_header: {
-			header = parse_midi_header(ptr, end);
-		} break;
-		case MidiChunkType_track: {
-			parse_midi_track_chunk(header, track, controller, ptr, ptr + chunk_length);
-		} break;
-		default: {
-			DEBUG_LOGF("unknown midi chunk type: %.*s", 4, chunk_type);
-		} break;
+		status = ptr[0];
+		if ((status & 0x80) == 0x00) {
+			status = running_status;
+		} else {
+			running_status = status;
+			ptr++;
 		}
 
-		ptr += chunk_length;
-	} while (ptr < end);
+		if (status >= 0x80 && status <= 0xEF) { // midi events
+			switch (status & 0xF0) {
+			case 0x80: {
+				MidiFileEvent *event = new MidiFileEvent;
+
+				event->ticks = ticks;
+				event->type          = MidiFileEventType_note_off;
+				event->note.note     = *ptr++;
+				event->note.velocity = *ptr++;
+				event->note.channel  = status & 0x0F;
+
+				insert_midi_event(midi, event);
+			} break;
+			case 0x90: {
+				MidiFileEvent *event = new MidiFileEvent;
+
+				event->ticks = ticks;
+				event->type          = MidiFileEventType_note_on;
+				event->note.note     = *ptr++;
+				event->note.velocity = *ptr++;
+				event->note.channel  = status & 0x0F;
+
+				insert_midi_event(midi, event);
+			} break;
+			default:
+				DEBUG_LOGF("unimplemented midi event type: 0x%20x",
+					       status & 0xF0);
+				break;
+			}
+		} else if (status == 0xF0 || status == 0xF7) { // sysex events
+			uint32_t length = read_variable_length(&ptr);
+			ptr += length;
+			// NOTE(jesper): double check this for the different kinds, might
+			// have to be + 1
+			DEBUG_BREAK();
+		} else if (status == 0xFF) { // meta events
+			uint8_t  type   = *ptr++;
+			uint32_t length = read_variable_length(&ptr);
+
+			switch (type) {
+			case 0x01: // text
+			case 0x02: // copyright
+			case 0x03: // name
+			case 0x04: // instrument
+			case 0x05: // lyric
+			case 0x06: // marker
+			case 0x07: // cue point
+			case 0x08: // program name
+			case 0x09: // device name
+				DEBUG_LOGF("text: %.*s", length, ptr);
+				break;
+			case 0x51: { // tempo
+				MidiFileEvent *event = new MidiFileEvent;
+
+				event->ticks = ticks;
+				event->type  = MidiFileEventType_tempo;
+				event->tempo = read_24bit(ptr);
+
+				insert_midi_event(midi, event);
+			} break;
+			case 0x2F:
+				end_of_track = true;
+				break;
+			default:
+				DEBUG_LOGF("unimplemented meta event type: 0x%02x", status);
+				break;
+			}
+
+			ptr += length;
+		} else {
+			DEBUG_LOGF("skipping over unknown status in track: 0x%02x", status);
+		}
+	}
+
+	return ticks - torigin;
 }
 
+MidiFile read_midi_file(const char *path)
+{
+	MidiFile midi = {};
+
+	size_t size;
+	char *file = read_entire_file(path, &size);
+	if (file == nullptr) {
+		return midi;
+	}
+
+
+	MidiChunkType chunk_type = read_midi_chunk_type(&file);
+	uint32_t chunk_length    = read_32bit(&file);
+	DEBUG_ASSERT(chunk_type == MidiChunkType_header);
+
+	char *ptr = file;
+	midi.format  = read_16bit(&ptr);
+	midi.ntracks = read_16bit(&ptr);
+
+	uint8_t divisor    = *ptr++;
+	uint8_t resolution = *ptr++;
+
+	file += chunk_length;
+
+	if (divisor & 0x80) {
+		DEBUG_BREAK();
+	} else {
+		midi.divisor_type = MidiDivisorType_ppq;
+		midi.divisor = (divisor << 8) | resolution;
+	}
+
+	int64_t torigin = 0;
+
+	for (int32_t i = 0; i < (int32_t)midi.ntracks; ++i) {
+		chunk_type   = read_midi_chunk_type(&file);
+		chunk_length = read_32bit(&file);
+		DEBUG_ASSERT(chunk_type == MidiChunkType_track);
+
+		int64_t ticks = parse_midi_track(&midi, torigin,
+		                                 file, file + chunk_length);
+
+		if (midi.format == 2) { // series of tracks
+			torigin += ticks;
+		}
+
+		file += chunk_length;
+	}
+
+	return midi;
+}
+
+
+int64_t midi_ticks_to_time(MidiFile *midi,
+                           uint32_t tempo,
+                           int64_t tempo_event_ticks,
+                           int64_t ticks)
+{
+	int64_t microseconds = 0;
+
+	switch (midi->divisor_type) {
+	case MidiDivisorType_ppq: {
+		float tempo_float = 120.0f;
+		if (tempo > 0) {
+			tempo_float = (float)(60000000.0 / tempo);
+		}
+		float seconds = (((float)(ticks - tempo_event_ticks)) / midi->divisor / (tempo_float / 60));
+		microseconds = (int64_t)(seconds * 1000000);
+	} break;
+	default:
+		DEBUG_BREAK();
+		break;
+	}
+
+	return microseconds;
+}
+
+void play_midi_file(MidiFile *midi,
+                    int32_t num_controllers,
+                    ControllerHandle_t *controllers)
+{
+	// TODO(jesper): support more midi channels using multiple controllers
+	VAR_UNUSED(num_controllers);
+
+	uint32_t tempo = 0;
+	int64_t tempo_event_ticks = 0;
+
+	int64_t last_time = 0;
+	for (MidiFileEvent *event = midi->first_event;
+	     event != nullptr;
+	     event = event->next)
+	{
+		int64_t time = midi_ticks_to_time(midi, tempo, tempo_event_ticks, event->ticks);
+		int64_t duration = time - last_time;
+		last_time = time;
+
+		if (duration > 0) {
+			sleep_for(duration);
+		}
+
+		switch (event->type) {
+		case MidiFileEventType_note_on:
+			DEBUG_LOGF("midi event { time: %d, note: %d ON, velocity: %d, channel: %d }",
+				       event->ticks,
+				       event->note.note,
+				       event->note.velocity,
+				       event->note.channel);
+
+			if (event->note.channel == 0 || event->note.channel == 1) {
+				play_frequency(controllers[0], event->note.channel, midi_notes[event->note.note], 0.25);
+			}
+			break;
+		case MidiFileEventType_note_off:
+			DEBUG_LOGF("midi event { time: %d, note: %d OFF, velocity: %d, channel: %d }",
+				       event->ticks,
+				       event->note.note,
+				       event->note.velocity,
+				       event->note.channel);
+			if (event->note.channel == 0 || event->note.channel == 1) {
+				play_frequency(controllers[0], event->note.channel, 0.0, 0.0);
+			}
+			break;
+		case MidiFileEventType_tempo:
+			DEBUG_LOGF("midi event { time: %d, tempo: %d",
+			           event->ticks);
+			tempo = event->tempo;
+			tempo_event_ticks = event->ticks;
+			break;
+		}
+	}
+
+	play_frequency(controllers[0], 0, 0.0, 0);
+	play_frequency(controllers[0], 1, 0.0, 0);
+}
 
 int APIENTRY WinMain(HINSTANCE hInstance,
                      HINSTANCE hPrevInstance,
@@ -640,6 +562,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 	VAR_UNUSED(lpCmdLine);
 	VAR_UNUSED(nCmdShow);
 
+	MidiFile midi = read_midi_file("../bicycle-ride.mid");
 
 	QueryPerformanceFrequency(&clock_frequency);
 
@@ -664,12 +587,6 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 		quit();
 	}
 
-#if 0
-	if (!SteamAPI_IsSteamRunning()) {
-		OutputDebugString("steam isn't running, start it\n");
-		return -1;
-	}
-#endif
 	if (!SteamAPI_Init() ) {
 		OutputDebugString( "SteamAPI_Init() failed\n" );
 		return -1;
@@ -699,7 +616,7 @@ int APIENTRY WinMain(HINSTANCE hInstance,
 		}
 
 		if (num_controllers != 0) {
-			play_midi_file("../opening.mid", controller_handles[0]);
+			play_midi_file(&midi, num_controllers, controller_handles);
 			return 0;
 		}
 		SteamAPI_RunCallbacks();
